@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocp-viewer-smlibpy"
+version = "0.1.0"
+authors = [{ name = "Bernhard Walter", email = "b_walter@arcor.de" }]
+description = "Show smlibpy (SMLib) objects in the OCP CAD Viewer: the smlib kernel plugin for ocp-tessellate"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["3d", "cad", "smlib", "smlibpy", "viewer", "tessellation", "ocp", "nanocct"]
+license = "Apache-2.0"
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    # the plugin interface (ocp_tessellate.plugin) and the kernel tag of 3.7, not released yet
+    "ocp-tessellate>=3.7.0",
+    # ocp_viewer_core.viewer picks the host (ocp_vscode, jupyter_cadquery, build123d_studio, ocp_viewer);
+    # ocp_viewer_core.backend.register_plugin and the entry point group of 1.1.3, not released yet
+    "ocp-viewer-core>=1.1.3",
+    "smlibpy>=0.6.2",
+    "numpy>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ocp_viewer_smlibpy*"]
+
+[project.optional-dependencies]
+dev = ["bump-my-version", "build", "twine", "pytest", "ruff", "ty"]
+
+# every host runs the measurement backend in a process that imports no user code: it
+# loads this entry point on the first model that carries an smlib body,
+# and importing the package registers the backend contract (ocp_viewer_smlibpy.backend)
+[project.entry-points."ocp_viewer_core.backend"]
+smlib = "ocp_viewer_smlibpy"
+
+[project.urls]
+"Homepage" = "https://github.com/bernhard-42/ocp-viewer-smlibpy"
+"Bug Tracker" = "https://github.com/bernhard-42/ocp-viewer-smlibpy/issues"
+
+# ruff settings
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+# bump-my-version settings
+
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = false
+tag = false
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(?P<release>\\d*)(?P<build>\\d*)"
+serialize = ["{major}.{minor}.{patch}"]
+allow_dirty = true
+message = "Bump version: {current_version} → {new_version}"
+search = "{current_version}"
+replace = "{new_version}"
+regex = false
+ignore_missing_version = false
+ignore_missing_files = false
+sign_tags = false
+commit_args = ""
+setup_hooks = []
+pre_commit_hooks = []
+post_commit_hooks = []
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "ocp_viewer_smlibpy/_version.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
