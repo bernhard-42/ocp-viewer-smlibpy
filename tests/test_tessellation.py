@@ -1,20 +1,20 @@
-"""The tessellation contract of the smlib plugin (ocp-tessellate's docs/ExternalKernel.md,
-steps 1 to 4): the layout of the Tessellation dict, the box against the OCCT path, the
-sampling of edges, the bounding box, and convert."""
+"""TessellationProtocol and ShowProtocol.convert of the smlib plugin: the layout of the
+Tessellation dict, the box against the OCCT path, the sampling of edges, the bounding
+box, and convert."""
 
 import numpy as np
 import pytest
-from ocp_tessellate import OcpGroup
 from ocp_tessellate._kernel import kernel
 from ocp_tessellate.convert import tessellate_group, to_ocpgroup
 from ocp_tessellate.ocp_utils import bounding_box as occt_bounding_box
-from ocp_tessellate.plugin import CURVE_TYPES, SURFACE_TYPES, OcpExternalObject, external_scene
+from ocp_tessellate.plugin import CURVE_TYPES, SURFACE_TYPES, CoordAxis, CoordSystem
 from ocp_tessellate.tessellator import compute_quality, tessellate as occt_tessellate
 from smlibpy import (
     Axis,
     Box,
     Cone,
     Cylinder,
+    Edge,
     Line,
     Plane,
     Pos,
@@ -28,9 +28,22 @@ from smlibpy import (
 )
 from smlibpy.deformations import Lattice
 
-from ocp_viewer_smlibpy.viewer import bounding_box, cache_id, convert, discretize_edges, tessellate
+from ocp_viewer_smlibpy.show import SmlibShow
+from ocp_viewer_smlibpy.tessellation import SmlibTessellation
 
 DEVIATION, ANGULAR = 0.1, 0.2
+
+
+TESSELLATION = SmlibTessellation()
+SHOW = SmlibShow()
+bounding_box = TESSELLATION.bounding_box
+cache_id = TESSELLATION.cache_id
+discretize_edges = TESSELLATION.discretize_edges
+convert = SHOW.convert
+
+
+def tessellate(body, quality, angular_tolerance, compute_edges=True):
+    return TESSELLATION.tessellate(body, 0.1, quality, angular_tolerance, compute_edges)
 
 
 def quality_of(body):
@@ -145,16 +158,17 @@ def test_edge_polylines_stay_within_a_tenth_of_the_quality(body):
 def test_discretize_edges_of_a_rectangle_with_an_arc():
     wire = Wire([Line((0, 0, 0), (2, 0, 0)), Line((2, 0, 0), (2, 1, 0)),
                  ThreePointArc((2, 1, 0), (1, 1.5, 0), (0, 1, 0)), Line((0, 1, 0), (0, 0, 0))])
-    d = discretize_edges(wire.edges(), deviation=DEVIATION)
+    deflection = compute_quality(bounding_box(wire.edges()), deviation=DEVIATION) / 10
+    d = discretize_edges(wire.edges(), deflection)
     counts = d["segments_per_edge"].tolist()
     assert counts[0] == counts[1] == counts[3] == 1 and counts[2] > 10
     assert d["edge_types"].tolist() == [CURVE_TYPES["Line"], CURVE_TYPES["Line"], CURVE_TYPES["Circle"], CURVE_TYPES["Line"]]
     assert d["segments_per_edge"].sum() * 6 == len(d["edges"])
     corners = sorted(map(tuple, d["obj_vertices"].reshape(-1, 3).tolist()))
     assert corners == [(0, 0, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0)]
-    # an explicit accuracy wins over the deviation rule (which gives about 1.2e-4 here)
-    assert discretize_edges(wire.edges(), edge_accuracy=1e-5)["segments_per_edge"][2] > counts[2]
-    assert discretize_edges(wire.edges(), edge_accuracy=1e-3)["segments_per_edge"][2] < counts[2]
+    # the deflection decides (about 1.2e-4 here)
+    assert discretize_edges(wire.edges(), 1e-5)["segments_per_edge"][2] > counts[2]
+    assert discretize_edges(wire.edges(), 1e-3)["segments_per_edge"][2] < counts[2]
 
 
 def test_a_flat_sketch_has_a_bounding_box_with_a_quality():
@@ -162,32 +176,48 @@ def test_a_flat_sketch_has_a_bounding_box_with_a_quality():
     assert bb.zsize == 0 and compute_quality(bb, deviation=DEVIATION) > 0
 
 
+def converted(obj, name="b", color=None, alpha=None, helper_scale=1.0):
+    return convert(obj, name, color, alpha, helper_scale)
+
+
 def test_convert_picks_the_kind_and_the_building_block():
     box = Box(1, 2, 3)
-    kinds = {name: convert(o, name).kind for name, o in (
+    kinds = {name: converted(o, name).kind for name, o in (
         ("part", box), ("sketch", Rectangle(1, 1)), ("shell", box.shells()[0]), ("face", box.faces()[0]),
         ("edge", box.edges()[0]), ("wire", box.wires()[0]), ("vertex", box.vertices()[0]), ("vector", Vector(1, 1, 1)),
         ("location", Pos(1, 2, 3)), ("plane", Plane.XZ), ("axis", Z))}
     assert kinds == {"part": "solid", "sketch": "face", "shell": "shell", "face": "face", "edge": "edge", "wire": "edge",
                      "vertex": "vertex", "vector": "vertex", "location": "edge", "plane": "edge", "axis": "edge"}
-    group = convert([box, box.edges()], "list")
-    assert isinstance(group, OcpGroup) and [o.name for o in group.objects] == ["Part(0)", "ShapeList(1)"]
-    assert isinstance(convert({"a": box}, "dict").objects[0], OcpExternalObject)
     with pytest.raises(TypeError):
-        convert(kernel().BRepPrimAPI.BRepPrimAPI_MakeBox(1, 1, 1).Shape(), "occt")
+        converted(kernel().BRepPrimAPI.BRepPrimAPI_MakeBox(1, 1, 1).Shape(), "occt")
+
+
+def test_the_helpers_are_the_kernels_lines():
+    helper = converted(Pos(1, 2, 3), helper_scale=2.0)
+    assert isinstance(helper, CoordSystem) and all(isinstance(e, Edge) for e in helper.objs)
+    assert tuple(helper.objs[0].end) == pytest.approx((3, 2, 3))
+    arrow = converted(Z, helper_scale=2.0)
+    assert isinstance(arrow, CoordAxis) and len(arrow.objs) == 11 and all(isinstance(e, Edge) for e in arrow.objs)
+
+
+def test_lists_and_dicts_are_not_converts_concern():
+    box = Box(1, 2, 3)
+    with pytest.raises(TypeError):
+        converted([box], "list")
+    with pytest.raises(TypeError):
+        converted({"a": box}, "dict")
 
 
 def test_convert_takes_a_bodys_own_color_unless_one_is_given():
     blue = Box(1, 1, 1).colored("steelblue")
-    assert convert(blue, "b").color.web_color == "#4682b4"
-    assert convert(blue, "b", color="red", alpha=0.5).color.web_color == "#ff0000"
-    assert convert(Box(1, 1, 1), "b").color is None
+    assert converted(blue).color.web_color == "#4682b4"
+    assert converted(blue, color="red", alpha=0.5).color.web_color == "#ff0000"
+    assert converted(Box(1, 1, 1)).color is None
 
 
 def test_the_scene_goes_through_the_pipeline():
     box = Box(10, 10, 2)
-    scene, names, colors, alphas = external_scene([box, box.edges(), Pos(0, 0, 5), Z], convert, names=["box", "edges", "loc", "axis"])
-    part_group, instances = to_ocpgroup(*scene, names=names, colors=colors, alphas=alphas, helper_scale=3.0)
+    part_group, instances = to_ocpgroup(box, box.edges(), Pos(0, 0, 5), Z, names=["box", "edges", "loc", "axis"], helper_scale=3.0)
     meshed, shapes, mapping = tessellate_group(part_group, instances, {"deviation": DEVIATION, "angular_tolerance": ANGULAR})
     parts = {p["name"]: p for p in shapes["parts"]}
     assert parts["box"]["type"] == "shapes" and len(meshed) == 1
@@ -195,19 +225,23 @@ def test_the_scene_goes_through_the_pipeline():
     assert parts["loc"]["color"] == ["#ff0000", "#008000", "#0000ff"]
     seg = np.asarray(parts["axis"]["shape"]["edges"]).reshape(-1, 2, 3)
     assert abs(np.linalg.norm(seg[0, 1] - seg[0, 0]) - 3.0) < 1e-6
-    # the body is in the backend's model, tagged for the smlib backend; edges, the
-    # location and the axis are not (groups keep an entry without shapes)
+    # every leaf is in the backend's model, tagged for the smlib backend, the body, its
+    # edges, the location and the axis, as OCCT's are
     entries = {m["id"]: m for m in mapping["parts"] if "shape" in m}
-    assert list(entries) == ["/Group/box"]
+    assert set(entries) == {"/Group/box", "/Group/loc", "/Group/axis"}
     assert entries["/Group/box"]["shape"] == {"kernel": "smlib", "obj": box}
+    assert entries["/Group/loc"]["shape"]["kernel"] == "smlib" and len(entries["/Group/loc"]["shape"]["obj"]) == 3
+    assert entries["/Group/axis"]["shape"]["kernel"] == "smlib" and len(entries["/Group/axis"]["shape"]["obj"]) == 11
+    edges = next(m for m in mapping["parts"] if m["id"] == "/Group/edges")
+    assert len(edges["parts"]) == 12 and all(e["shape"]["kernel"] == "smlib" for e in edges["parts"])
 
 
 def test_the_cache_id_is_the_geometry_not_the_object():
-    """Step 3b: equal for a body built twice, different for a moved copy, and what
-    convert hands to the pipeline."""
+    """Equal for a body built twice, different for a moved copy, and what the pipeline
+    shares a mesh under."""
     assert cache_id(Box(1, 2, 3)) == cache_id(Box(1, 2, 3))
     assert cache_id(Box(1, 2, 3)) != cache_id(Pos(1, 0, 0) * Box(1, 2, 3))
     box = Box(1, 2, 3)
-    expected = cache_id(box)
-    assert convert(box, "b").cache_id == expected
+    group, instances = to_ocpgroup(box, names=["b"])
+    assert group.objects[0].cache_id == f"smlib:{cache_id(box)}" == instances[0]["cache_id"]
 

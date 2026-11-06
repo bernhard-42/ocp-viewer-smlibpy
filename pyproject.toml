@@ -19,9 +19,9 @@ classifiers = [
 dependencies = [
     # the plugin interface (ocp_tessellate.plugin) and the kernel tag of 3.7, not released yet
     "ocp-tessellate>=3.7.0",
-    # ocp_viewer_core.viewer picks the host (ocp_vscode, jupyter_cadquery, build123d_studio, ocp_viewer);
-    # ocp_viewer_core.backend.register_plugin and the entry point group of 1.1.3, not released yet
-    "ocp-viewer-core>=1.1.3",
+    # the host's show and show_all take this kernel's objects, and
+    # ocp_viewer_core.backend.register_plugin and its entry point group, of 1.2, not released
+    "ocp-viewer-core>=1.2.0",
     "smlibpy>=0.6.2",
     "numpy>=2.0",
 ]
@@ -33,11 +33,14 @@ include = ["ocp_viewer_smlibpy*"]
 [project.optional-dependencies]
 dev = ["bump-my-version", "build", "twine", "pytest", "ruff", "ty"]
 
-# every host runs the measurement backend in a process that imports no user code: it
-# loads this entry point on the first model that carries an smlib body,
-# and importing the package registers the backend contract (ocp_viewer_smlibpy.backend)
-[project.entry-points."ocp_viewer_core.backend"]
-smlib = "ocp_viewer_smlibpy"
+# keyed by the kernel tag; importing the module registers that half of the plugin. A script
+# may import only smlibpy, and every host runs the measurement backend in a process that
+# imports no user code and draws nothing
+[project.entry-points."ocp_viewer.kernels.show"]
+smlib = "ocp_viewer_smlibpy.show"
+
+[project.entry-points."ocp_viewer.kernels.backend"]
+smlib = "ocp_viewer_smlibpy.backend"
 
 [project.urls]
 "Homepage" = "https://github.com/bernhard-42/ocp-viewer-smlibpy"

@@ -32,5 +32,5 @@ def test_bodies_edges_and_points_convert_exactly(binding):
 def test_an_offset_surface_is_refused_with_a_hint():
     part = loft([Rectangle(2, 2), Pos(0, 0, 3) * Circle(0.5)])
     free_form = part.faces().filter_by(lambda f: f.geom_type == "bspline")[0]
-    with pytest.raises(ValueError, match="smlib_show"):
+    with pytest.raises(ValueError, match="host's show"):
         to_occt(free_form.offset(0.2))

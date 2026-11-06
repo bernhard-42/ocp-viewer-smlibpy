@@ -16,29 +16,22 @@
 
 """smlibpy objects in the OCP CAD Viewer family: the kernel plugin for SMLib.
 
-`smlib_show` and `smlib_show_all` show parts, sheets, sketches, faces, edges,
-wires, vertices, locations, planes and axes of smlibpy, tessellated by smlib's
-own kernel, through ocp_tessellate's plugin interface (docs/ExternalKernel.md of
-ocp-tessellate). The viewer's measurement tools answer for them from smlib's own
-geometry: importing this package registers `backend` with ocp_viewer_core's
-measurement backend, and the entry point `smlib` of the group
-`ocp_viewer_core.backend` (pyproject.toml) imports it in the backend's process,
-which every host runs apart from the user's. `to_occt` converts them to OCCT shapes.
+The host's `show` and `show_all` take parts, sheets, sketches, faces, edges, wires,
+vertices, locations, planes and axes of smlibpy, tessellated by smlib's own kernel and
+measured from its own geometry. The plugin is three classes, one per protocol:
+
+- `tessellation.SmlibTessellation`: ocp_tessellate's TessellationProtocol
+- `show.SmlibShow`: ocp_tessellate's ShowProtocol
+- `backend.SmlibBackend`: ocp_viewer_core's BackendProtocol
+
+Importing `show` registers the first two, importing `backend` the third. The entry points
+`smlib` of the groups `ocp_viewer.kernels.show` and `ocp_viewer.kernels.backend`
+(pyproject.toml) import them, the first in the user's process at the first show, so a script
+needs only `from smlibpy import ...`, the second in the backend's process, which every host
+runs apart from the user's. `to_occt` converts smlibpy objects to OCCT shapes.
 """
 
-from ocp_viewer_core.backend import register_plugin
-
-from . import backend
 from ._version import __version__ as __version__, __version_info__ as __version_info__
-from .viewer import smlib_show, smlib_show_all, to_occt
+from .occt import to_occt
 
-__all__ = ["__version__", "__version_info__", "backend", "smlib_show", "smlib_show_all", "to_occt"]
-
-register_plugin(
-    backend.KERNEL,
-    backend.load,
-    backend.serialize,
-    backend.get_properties,
-    backend.calc_distance,
-    backend.calc_angle,
-)
+__all__ = ["__version__", "__version_info__", "to_occt"]

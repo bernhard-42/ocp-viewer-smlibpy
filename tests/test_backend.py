@@ -1,45 +1,103 @@
-"""The backend contract of the smlib plugin (ocp_viewer_smlibpy.backend): the bytes a
+"""BackendProtocol of the smlib plugin (ocp_viewer_smlibpy.backend): the bytes a
 body travels as, the ids the loaded body answers to, the properties and distances
 against ocp_viewer_core's OCCT measurements of the same geometry, and the whole way
 through ocp_viewer_core's ViewerBackend, registered as the package import does it."""
 
 import base64
+import math
 
 import numpy as np
 import orjson
 import pytest
 from ocp_tessellate.convert import tessellate_group, to_ocpgroup
+from ocp_tessellate.kernels import encode_kernel_shapes
 from ocp_tessellate.ocp_utils import tq_to_loc
-from ocp_tessellate.plugin import external_scene
+from ocp_tessellate.plugin import Placement, register_show
 from ocp_tessellate.tessellator import compute_quality, get_edges, get_faces, get_vertices
 from ocp_viewer_core import measure as occt
 from ocp_viewer_core.backend import ViewerBackend
 from ocp_viewer_core.codec import default
 from ocp_viewer_core.comms import MessageType
-from ocp_viewer_core.measure import distance_response
-from ocp_viewer_core.plugins import PLUGINS, encode_kernel_shapes, plugin_of
-from smlibpy import Box, Cylinder, Pos, Rectangle, Rot, Sphere, Torus, Vector, Vertex
+from ocp_viewer_core.measure import _angle_values, _distance_values, distance_response, properties_response
+from ocp_viewer_core.plugins import PLUGINS, backend_of
+from smlibpy import (
+    Axis,
+    Box,
+    Cylinder,
+    Edge,
+    Line,
+    Plane,
+    Pos,
+    Rectangle,
+    Rot,
+    ShapeList,
+    Sphere,
+    Torus,
+    Vector,
+    Vertex,
+)
 
 from ocp_viewer_smlibpy import backend, to_occt
-from ocp_viewer_smlibpy.backend import (
-    KERNEL,
-    calc_angle,
-    calc_distance,
-    get_properties,
-    load,
-    serialize,
-)
-from ocp_viewer_smlibpy.viewer import bounding_box, convert, tessellate
+from ocp_viewer_smlibpy._wire import FORMAT
+from ocp_viewer_smlibpy.backend import KERNEL, SmlibBackend
+from ocp_viewer_smlibpy.show import SmlibShow
+from ocp_viewer_smlibpy.tessellation import SmlibTessellation
+
+BACKEND = SmlibBackend()
+serialize = SmlibShow().serialize
+deserialize = BACKEND.deserialize
+
+
+def load(data, loc=None):
+    """The sequence the backend runs."""
+    shape = BACKEND.deserialize(data)
+    if loc is not None:
+        shape = BACKEND.moved(shape, loc)
+    return (shape, *BACKEND.parts(shape))
+
+
+def get_properties(shape):
+    """What the panel shows of a shape, as the core makes it from what the kernel knows."""
+    return properties_response(BACKEND.kind(shape), BACKEND.properties(shape))
+
+
+def calc_distance(shape1, shape2, center=False):
+    """The distance values, as the core takes them from the kernel."""
+    return _distance_values(shape1, shape2, center, BACKEND.center, BACKEND.closest_points)
+
+
+def calc_angle(shape1, shape2):
+    """The angle values, as the core takes them from the kernel."""
+    return _angle_values(BACKEND.kind(shape1), BACKEND.kind(shape2), shape1, shape2, BACKEND.closest_directions)
+
+
+TESSELLATION = SmlibTessellation()
+bounding_box = TESSELLATION.bounding_box
+
+
+def tessellate(body, quality, angular_tolerance, compute_edges=True):
+    return TESSELLATION.tessellate(body, 0.1, quality, angular_tolerance, compute_edges)
+
 
 DEVIATION, ANGULAR = 0.1, 0.2
 
 
-def test_importing_the_package_registered_the_backend():
+def test_the_bytes_carry_a_format_version():
+    data = serialize(Box(1, 1, 1))
+    assert data[0] == FORMAT
+    assert len(deserialize(data).faces()) == 6
+    assert deserialize(serialize(Vertex(1, 2, 3))) is not None
+
+
+def test_bytes_of_another_format_say_so():
+    data = bytes([FORMAT + 1]) + serialize(Box(1, 1, 1))[1:]
+    with pytest.raises(ValueError, match="differs between the user's and the backend's environment"):
+        deserialize(data)
+
+
+def test_importing_the_module_registered_the_backend():
     assert KERNEL in PLUGINS
-    plugin = plugin_of(KERNEL)
-    assert plugin.load is load and plugin.serialize is serialize
-    assert plugin.get_properties is get_properties
-    assert plugin.calc_distance is calc_distance and plugin.calc_angle is calc_angle
+    assert isinstance(backend_of(KERNEL), SmlibBackend)
 
 
 def plate():
@@ -48,7 +106,7 @@ def plate():
 
 
 def entry(id_, body, loc=None):
-    """A mapping entry as OcpExternalObject.collect emits it for a kernel body."""
+    """A mapping entry as OcpObject.collect emits it for a kernel body."""
     return {"id": id_, "shape": {"kernel": KERNEL, "obj": body}, "loc": loc}
 
 
@@ -102,7 +160,7 @@ class Twin:
 # ---------------------------------------------------------------------------
 
 
-def test_the_bytes_are_an_smb_file_and_load_as_the_same_body():
+def test_the_bytes_load_as_the_same_body():
     body = plate()
     data = serialize(body)
     assert isinstance(data, bytes) and len(data) > 0
@@ -132,7 +190,7 @@ def test_a_loaded_body_answers_to_the_ids_the_tessellation_numbers():
         centroids = vertices_xyz[block].mean(axis=1)
         for centroid in centroids[:: max(1, len(centroids) // 5)]:
             assert faces[i].distance_to(tuple(map(float, centroid))) < DEVIATION
-        assert backend._geom_type(faces[i]) == backend._SURFACE_NAMES[int(mesh["face_types"][i])]
+        assert BACKEND._geom_type(faces[i]) == backend._SURFACE_NAMES[int(mesh["face_types"][i])]
 
     points = mesh["edges"].reshape(-1, 2, 3)
     start = 0
@@ -141,17 +199,17 @@ def test_a_loaded_body_answers_to_the_ids_the_tessellation_numbers():
         start += count
         for p in block[:, 0, :][:: max(1, count // 4)]:
             assert edges[i].distance_to(tuple(map(float, p))) < DEVIATION / 10 + 1e-6
-        assert backend._geom_type(edges[i]) == backend._CURVE_NAMES[int(mesh["edge_types"][i])]
+        assert BACKEND._geom_type(edges[i]) == backend._CURVE_NAMES[int(mesh["edge_types"][i])]
 
     assert np.allclose(mesh["obj_vertices"].reshape(-1, 3), [tuple(v) for v in vertices], atol=1e-6)
 
 
-def test_a_location_on_the_wire_moves_the_body_as_occt_moves_it():
+def test_a_placement_moves_the_body_as_occt_moves_it():
     body = Box(4, 6, 2)
     axis = np.array([1.0, 2.0, 2.0]) / 3.0
     half = 0.35
     t, q = (1.0, 2.0, 3.0), (*(axis * np.sin(half)), float(np.cos(half)))
-    loaded, _, _, _ = load(serialize(body), (t, q))
+    loaded, _, _, _ = load(serialize(body), Placement(t, q))
 
     moved_occt = to_occt(body).Moved(tq_to_loc(t, q))
     bb_occt = section(occt.get_properties(moved_occt), "bb")
@@ -161,10 +219,10 @@ def test_a_location_on_the_wire_moves_the_body_as_occt_moves_it():
 
 def test_a_body_measured_before_it_is_serialized_still_loads_in_order():
     body = plate()
-    before = [backend._center(f) for f in body.faces()]
+    before = [BACKEND.center(f) for f in body.faces()]
     _ = body.volume, body.bbox(), [f.center() for f in body.faces()]
     _, faces, _, _ = load(serialize(body))
-    assert np.allclose([backend._center(f) for f in faces], before, atol=1e-9)
+    assert np.allclose([BACKEND.center(f) for f in faces], before, atol=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +413,7 @@ def test_a_vertex_has_no_angle():
 
 def get_distance(shape1, shape2, center):
     """The distance tool's response for smlib shapes, as the backend assembles it."""
-    return distance_response(shape1, shape2, center, calc_distance, calc_angle)
+    return distance_response(shape1, shape2, center, BACKEND.kind, BACKEND.center, BACKEND.closest_points, BACKEND.closest_directions)
 
 
 def test_the_distance_response_has_the_layout_of_the_occt_one():
@@ -412,12 +470,11 @@ def test_a_vertex_entry_of_the_model_is_a_point():
 
 
 def shown(*objects, names):
-    """What the show pipeline hands to the backend: the scene of smlib_show through
-    ocp_tessellate, the mapping encoded as ocp_viewer_core's show sends it, through
-    the codec and JSON, loaded by a backend. Returns the backend and the mesh's
-    shapes, whose ids the viewer selects."""
-    scene, names, colors, alphas = external_scene(objects, convert, names, None, None)
-    group, instances = to_ocpgroup(*scene, names=names, colors=colors, alphas=alphas)
+    """What the show pipeline hands to the backend: the objects as the host's show
+    converts them through ocp_tessellate, the mapping encoded as ocp_viewer_core's show
+    sends it, through the codec and JSON, loaded by a backend. Returns the backend and
+    the mesh's shapes, whose ids the viewer selects."""
+    group, instances = to_ocpgroup(*objects, names=names)
     _, shapes, mapping = tessellate_group(group, instances, {"deviation": DEVIATION, "angular_tolerance": ANGULAR})
     model = orjson.loads(orjson.dumps(encode_kernel_shapes(mapping), default=default))
     viewer = ViewerBackend()
@@ -441,7 +498,7 @@ def test_a_shown_part_is_measured_by_the_ids_of_its_mesh():
     for kind, count in (("faces", len(part.faces())), ("edges", len(part.edges(seams=True)))):
         for i in range(count):
             assert f"{plate_id}/{kind}/{kind}_{i}" in viewer.model
-    assert viewer.plugins[plate_id].kernel == KERNEL
+    assert viewer.kernels[plate_id] == KERNEL
 
     viewer.handle_event({"activeTool": "DistanceMeasurement"}, MessageType.UPDATES)
     response = viewer.handle_event(
@@ -472,3 +529,139 @@ def test_a_face_is_measured_as_the_shell_it_is_drawn_as():
     response = viewer.handle_event({"selectedShapeIDs": [f"{leaf['id']}/faces/faces_0", "shift"]}, MessageType.UPDATES)
     assert response["geom_type"] == "Cylinder" and section(response, "area") == pytest.approx(face.area)
 
+
+class LocatedAssembly:
+    """Parts that stay local, placed by the assembly that holds them."""
+
+    def __init__(self, links, at=None):
+        self.links, self.at = links, at
+
+
+class LocatedAssemblyShow(SmlibShow):
+    def is_object(self, obj):
+        return isinstance(obj, LocatedAssembly)
+
+    def get_children(self, obj):
+        return obj.links
+
+    def get_location(self, obj):
+        return obj.at
+
+
+register_show("smlib test located assembly", SmlibTessellation(), LocatedAssemblyShow(), api=1)
+
+Q0 = (0.0, 0.0, 0.0, 1.0)
+QZ90 = (0.0, 0.0, 0.7071067811865476, 0.7071067811865476)
+
+
+def test_a_part_in_a_located_assembly_is_measured_where_it_is_drawn():
+    """The backend gets every location above a part: its answers match the same parts moved
+    there by hand."""
+    local_a, local_b = Box(10, 10, 10), Box(4, 4, 4)
+    sub = LocatedAssembly([("b", local_b, Placement((3.0, 0.0, 0.0), Q0))])
+    top = LocatedAssembly([("a", local_a, Placement((0.0, 5.0, 0.0), Q0)), ("sub", sub, Placement((0.0, 40.0, 0.0), QZ90))], at=Placement((100.0, 0.0, 0.0), Q0))
+    group, instances = to_ocpgroup(top, names=["top"])
+    _, _, mapping = tessellate_group(group, instances)
+
+    moved_a = Pos(100, 5, 0) * local_a
+    moved_b = Pos(100, 40, 0) * Rot(0, 0, 90) * Pos(3, 0, 0) * local_b
+
+    viewer = ViewerBackend()
+    viewer.load_model(orjson.loads(orjson.dumps(encode_kernel_shapes(mapping), default=default)))
+    viewer.handle_event({"activeTool": "PropertiesMeasurement"}, MessageType.UPDATES)
+    response = viewer.handle_event({"selectedShapeIDs": ["/top/sub/b", "shift"]}, MessageType.UPDATES)
+    box = section(response, "bb")
+    assert box["min"] == pytest.approx(tuple(moved_b.bbox().min), abs=1e-6)
+    assert box["max"] == pytest.approx(tuple(moved_b.bbox().max), abs=1e-6)
+
+    viewer.handle_event({"activeTool": "DistanceMeasurement"}, MessageType.UPDATES)
+    response = viewer.handle_event({"selectedShapeIDs": ["/top/a", "/top/sub/b", False]}, MessageType.UPDATES)
+    assert response["result"][0]["distance"] == pytest.approx(calc_distance(moved_a, moved_b)["distance"])
+
+
+# ---------------------------------------------------------------------------
+# what every leaf travels as, and how it is measured
+# ---------------------------------------------------------------------------
+
+
+def ends(edge):
+    return tuple(edge.start), tuple(edge.end)
+
+
+def test_serialize_round_trips_every_kind_of_leaf():
+    box = Box(1, 2, 3)
+    assert deserialize(serialize(box)).volume == pytest.approx(box.volume)
+    line = Line((0, 0, 0), (1, 0, 0))
+    assert ends(deserialize(serialize(line))) == ends(line)
+    triad = [Line((0, 0, 0), (1, 0, 0)), Line((0, 0, 0), (0, 1, 0)), Line((0, 0, 0), (0, 0, 1))]
+    assert [ends(e) for e in deserialize(serialize(triad))] == [ends(e) for e in triad]
+    assert tuple(deserialize(serialize(Vertex(1, 2, 3)))) == (1, 2, 3)
+    assert tuple(deserialize(serialize(Vector(1, 2, 3)))) == (1, 2, 3)
+    assert [tuple(v) for v in deserialize(serialize([Vertex(1, 2, 3), Vertex(4, 5, 6)]))] == [(1, 2, 3), (4, 5, 6)]
+
+
+def test_edges_keep_their_order_and_kind():
+    edges = list(Cylinder(2, 4).edges(seams=True))
+    loaded = deserialize(serialize(edges))
+    assert [e.geom_type for e in loaded] == [e.geom_type for e in edges]
+    assert [e.length for e in loaded] == pytest.approx([e.length for e in edges])
+
+
+def test_load_splits_every_kind_of_leaf():
+    triad = [Line((0, 0, 0), (1, 0, 0)), Line((0, 0, 0), (0, 1, 0)), Line((0, 0, 0), (0, 0, 1))]
+    whole, faces, edges, vertices = load(serialize(triad), Placement((10.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
+    assert isinstance(whole, ShapeList) and faces == [] and len(edges) == 3 and len(vertices) == 4
+    assert ends(edges[0]) == ((10, 0, 0), (11, 0, 0))
+    whole, faces, edges, vertices = load(serialize(Line((0, 0, 0), (1, 0, 0))), None)
+    assert isinstance(whole, Edge) and len(edges) == 1 and len(vertices) == 2
+    whole, faces, edges, vertices = load(serialize([Vertex(1, 2, 3)]), Placement((10.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)))
+    assert isinstance(whole, Vertex) and tuple(whole) == (11, 2, 3) and tuple(vertices[0]) == (11, 2, 3)
+
+
+def test_a_location_is_measured_like_a_build123d_location():
+    """Against a 10 mm box at the origin, as `bd.Pos(20, 0, 0)` measures against `bd.Box`."""
+    import build123d as bd
+
+    viewer, shapes = shown(Box(10, 10, 10), Pos(20, 0, 0), names=["box", "l"])
+    ids = {leaf["name"]: leaf["id"] for leaf in mesh_leaves(shapes)}
+    reference, ref_shapes = shown(bd.Box(10, 10, 10), bd.Pos(20, 0, 0), names=["box", "l"])
+    ref_ids = {leaf["name"]: leaf["id"] for leaf in mesh_leaves(ref_shapes)}
+
+    def distance(backend, a, b, center):
+        backend.handle_event({"activeTool": "DistanceMeasurement"}, MessageType.UPDATES)
+        return backend.handle_event({"selectedShapeIDs": [a, b, center]}, MessageType.UPDATES)["result"][0]["distance"]
+
+    for center in (False, True):
+        assert distance(viewer, ids["l"], ids["box"], center) == pytest.approx(
+            distance(reference, ref_ids["l"], ref_ids["box"], center), abs=1e-6
+        )
+    viewer.handle_event({"activeTool": "PropertiesMeasurement"}, MessageType.UPDATES)
+    response = viewer.handle_event({"selectedShapeIDs": [ids["l"], "shift"]}, MessageType.UPDATES)
+    assert response["shape_type"] == "Compound" and response["geom_type"] == "Other"
+    assert f"{ids['l']}/edges/edges_2" in viewer.model and f"{ids['l']}/vertices/vertices_3" in viewer.model
+
+
+def test_an_axis_and_a_plane_are_in_the_model():
+    axis = Axis((30, 0, 0), (0, 0, 1))
+    viewer, shapes = shown(Box(10, 10, 10), axis, Plane.XZ, names=["box", "ax", "pl"])
+    ids = {leaf["name"]: leaf["id"] for leaf in mesh_leaves(shapes)}
+    assert f"{ids['ax']}/edges/edges_10" in viewer.model
+    assert f"{ids['pl']}/edges/edges_2" in viewer.model
+    viewer.handle_event({"activeTool": "DistanceMeasurement"}, MessageType.UPDATES)
+    response = viewer.handle_event({"selectedShapeIDs": [ids["ax"], ids["box"], False]}, MessageType.UPDATES)
+    # to the arrow's head, as a build123d axis measures
+    assert response["result"][0]["distance"] == pytest.approx(24.925)
+
+
+def test_edges_and_vertices_shown_on_their_own_are_measured():
+    line, point = Line((20, 0, 0), (30, 0, 0)), Vertex(0, 0, 40)
+    viewer, shapes = shown(Box(10, 10, 10), line, point, names=["box", "line", "point"])
+    ids = {leaf["name"]: leaf["id"] for leaf in mesh_leaves(shapes)}
+
+    def distance(a, b):
+        viewer.handle_event({"activeTool": "DistanceMeasurement"}, MessageType.UPDATES)
+        return viewer.handle_event({"selectedShapeIDs": [a, b, False]}, MessageType.UPDATES)["result"][0]["distance"]
+
+    assert distance(ids["line"], ids["box"]) == pytest.approx(15)
+    assert distance(ids["point"], ids["box"]) == pytest.approx(35)
+    assert distance(f"{ids['point']}/vertices/vertices_0", ids["line"]) == pytest.approx(math.hypot(20, 40))
