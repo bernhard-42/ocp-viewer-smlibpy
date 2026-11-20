@@ -17,11 +17,13 @@ classifiers = [
 ]
 
 dependencies = [
-    # the plugin interface (ocp_tessellate.plugin) and the kernel tag of 3.7, not released yet
-    "ocp-tessellate>=3.7.0",
-    # the host's show and show_all take this kernel's objects, and
-    # ocp_viewer_core.backend.register_plugin and its entry point group, of 1.2, not released
-    "ocp-viewer-core>=1.2.0",
+    # the plugin interface (ocp_tessellate.plugin) and the kernel tag came with 3.7; capped,
+    # since a minor release may still change that young interface
+    "ocp-tessellate>=3.7.0,<3.8.0",
+    # the viewers' show and show_all take this kernel's objects, and
+    # ocp_viewer_core.backend.register_plugin and its entry point group came with 1.2;
+    # capped like the viewers, major.minor is the core's contract
+    "ocp-viewer-core>=1.2.0,<1.3.0",
     "smlibpy>=0.6.2",
     "numpy>=2.0",
 ]

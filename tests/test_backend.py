@@ -23,6 +23,7 @@ from ocp_viewer_core.plugins import PLUGINS, backend_of
 from smlibpy import (
     Axis,
     Box,
+    Cone,
     Cylinder,
     Edge,
     Line,
@@ -358,6 +359,29 @@ def test_center_distances_match_occt(pair):
     theirs = occt.calc_distance(_occt_of(a, s1), _occt_of(b, s2), center=True)
     assert ours["distance"] == pytest.approx(theirs["distance"], abs=1e-6)
     assert ours["info"] == "center"
+
+
+def center_faces():
+    """Faces whose center the core takes from more than their surface's origin: a plane's
+    center of mass, and a cylinder's or cone's center of mass projected onto the axis -
+    each in a body moved away from where its surface was built."""
+    moved = Pos(3, -2, 7) * Rot(x=20, z=35)
+    return [
+        ("plane", Twin(plate().moved(moved)), "plane"),
+        ("cylinder", Twin(plate().moved(moved)), "cylinder"),
+        ("cone", Twin(Cone(4, 2, 6).moved(moved)), "cone"),
+    ]
+
+
+@pytest.mark.parametrize("case", center_faces(), ids=lambda c: c[0])
+def test_face_centers_match_occt(case):
+    """The Properties tool's center and the center-to-center distance put the center where
+    they do for the same face of OCCT (ocp_viewer_core.measure.get_center)."""
+    _, twin, geom_type = case
+    face = twin.face(geom_type)
+    occt_face = twin.twin(face)
+    assert np.allclose(BACKEND.center(face), occt.get_center(occt_face), atol=1e-6)
+    assert np.allclose(section(get_properties(face), "center"), section(occt.get_properties(occt_face), "center"), atol=1e-6)
 
 
 def _segment_distance(a0, a1, b0, b1):

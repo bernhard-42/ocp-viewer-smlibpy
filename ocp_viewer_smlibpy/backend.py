@@ -52,7 +52,9 @@ _SURFACE_NAMES = {code: name for name, code in SURFACE_TYPES.items()}
 _CURVE_NAMES = {code: name for name, code in CURVE_TYPES.items()}
 
 # the faces whose center is their axis' origin (as measure.get_center takes it)
-_AXIS_FACES = ("Cylinder", "Cone", "Sphere", "Torus", "SurfaceOfRevolution")
+_AXIS_FACES = ("Sphere", "Torus", "SurfaceOfRevolution")
+# the faces whose center is their center of mass projected onto their axis (measure._axis_center)
+_AXIS_MIDDLE_FACES = ("Cylinder", "Cone")
 
 
 class SmlibBackend(BackendProtocol[SmlibShape]):
@@ -93,9 +95,10 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
         return self._shape_type(shape), self._geom_type(shape)
 
     def center(self, shape: SmlibShape) -> Point:
-        """The center of a shape: of a circle its center, of a cylinder, cone, sphere, torus
-        or surface of revolution the origin of its axis, else the middle of an edge, the
-        centroid of a face or the center of mass of a body (ocp_viewer_core.measure.get_center)."""
+        """The center of a shape: of a circle its center, of a cylinder or cone face the axis
+        point at its middle, of a sphere, torus or surface of revolution the origin of its
+        axis, else the middle of an edge, the centroid of a face or the center of mass of a
+        body (ocp_viewer_core.measure.get_center)."""
         if isinstance(shape, Vertex):
             return self._point(shape)
         if isinstance(shape, ShapeList) and isinstance(shape[0], Vertex):
@@ -106,6 +109,8 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
                 return self._point(shape.arc_center)
             return self._point(shape.center())
         if isinstance(shape, Face):
+            if self._geom_type(shape) in _AXIS_MIDDLE_FACES:
+                return self._axis_center(shape)
             if self._geom_type(shape) in _AXIS_FACES:
                 return self._point(shape.axis.origin)
             return self._point(shape.center())
@@ -145,12 +150,13 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
 
         elif isinstance(shape, Face):
             if geom_type == "Plane":
-                props["center"] = self._point(shape.plane.origin)
+                # the center of mass, which a planar face contains (as OCCT's center has it)
+                props["center"] = self._point(shape.center())
             elif geom_type == "Cylinder":
-                props["center"] = self._point(shape.axis.origin)
+                props["center"] = self._axis_center(shape)
                 props["radius"] = float(shape.radius)
             elif geom_type == "Cone":
-                props["center"] = self._point(shape.axis.origin)
+                props["center"] = self._axis_center(shape)
                 props["base_radius"] = float(shape.radius)
                 props["half_angle"] = float(shape.cone_angle)
             elif geom_type == "Sphere":
@@ -293,6 +299,18 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
         if isinstance(shape, Edge):
             return self._point(shape.tangent_at(shape.param_at_point(point)))
         return self._point(shape.normal_at(point))
+
+    def _axis_center(self, face: Face) -> Point:
+        """The center of a cylinder or cone face: its center of mass projected onto its axis.
+
+        The axis' origin is where the surface was built, anywhere on an infinite axis; this is
+        the axis point at the face's middle, as ocp_viewer_core.measure._axis_center has it for
+        OCCT faces."""
+        origin = np.asarray(self._point(face.axis.origin))
+        direction = np.asarray(self._point(face.axis.direction))
+        com = np.asarray(self._point(face.center()))
+        x, y, z = origin + float((com - origin) @ direction) * direction
+        return float(x), float(y), float(z)
 
     def _point(self, value: Vector | Vertex | Point) -> Point:
         x, y, z = (float(c) for c in tuple(value))

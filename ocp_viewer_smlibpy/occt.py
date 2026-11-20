@@ -83,7 +83,7 @@ def to_occt(obj: object, binding: str | None = None) -> Any:
         except Exception as ex:  # KernelError for offset surfaces, ValueError for empty bodies
             raise ValueError(
                 f"to_occt: smlib cannot write this {type(b).__name__} as .brep ({ex}); "
-                "show it with the host's show instead"
+                "show it with the viewer's show instead"
             ) from ex
         shape = occ.TopoDS.TopoDS_Shape()
         # OCP's Read_s reads a BytesIO, nanocct's a text stream
