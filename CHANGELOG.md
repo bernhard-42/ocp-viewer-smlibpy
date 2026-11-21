@@ -1,3 +1,9 @@
+## unreleased
+
+**Fixes**
+
+- The Properties panel's guide line ends where it does for OCCT objects: at the face's point in the middle of its parameter box (for a cylinder the point opposite the seam, at half height), or at another point of the face when its middle is cut away. It ended at an arbitrary point the kernel chose inside the face
+
 ## v0.1.0 (2026-11-20)
 
 **Features**

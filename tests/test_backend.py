@@ -384,6 +384,26 @@ def test_face_centers_match_occt(case):
     assert np.allclose(section(get_properties(face), "center"), section(occt.get_properties(occt_face), "center"), atol=1e-6)
 
 
+@pytest.mark.parametrize("case", center_faces(), ids=lambda c: c[0])
+def test_face_refpoints_match_occt(case):
+    """The Properties panel's guide line ends where it does for the same face of OCCT: at the
+    surface point in the middle of the face's parameter box (center_of_geometry)."""
+    _, twin, geom_type = case
+    face = twin.face(geom_type)
+    assert np.allclose(get_properties(face)["refpoint"], occt.get_properties(twin.twin(face))["refpoint"], atol=1e-6)
+
+
+def test_a_face_whose_middle_is_cut_away_keeps_its_refpoint_on_the_face():
+    """A plate with a hole at its middle: the middle of the parameter box lies in the hole,
+    so the guide line ends at another point of the face instead."""
+    plate_with_hole = Box(20, 20, 2) - Cylinder(5, 2)
+    _, faces, _, _ = load(serialize(plate_with_hole))
+    top = max((f for f in faces if f.geom_type == "plane"), key=lambda f: f.center().z)
+    middle = top.position_at(0.5, 0.5)
+    assert top.distance_to(middle) > 1  # the middle is in the hole
+    assert top.distance_to(get_properties(top)["refpoint"]) < 1e-6
+
+
 def _segment_distance(a0, a1, b0, b1):
     """The distance of two straight segments, analytically (Ericson, Real-Time Collision
     Detection 5.1.9): an oracle for the alternating projection of two edges."""

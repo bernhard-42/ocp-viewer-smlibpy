@@ -169,8 +169,7 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
             elif geom_type == "SurfaceOfRevolution":
                 props["axis_location"] = self._point(shape.axis.origin)
                 props["axis_direction"] = self._point(shape.axis.direction)
-            # a point on the face, where the marker goes (a curved face's centroid can lie off it)
-            props["refpoint"] = self._point(shape.interior_point())
+            props["refpoint"] = self._face_refpoint(shape)
             props["area"] = float(shape.area)
             props["normal"] = self._point(shape.normal_at())
 
@@ -299,6 +298,17 @@ class SmlibBackend(BackendProtocol[SmlibShape]):
         if isinstance(shape, Edge):
             return self._point(shape.tangent_at(shape.param_at_point(point)))
         return self._point(shape.normal_at(point))
+
+    def _face_refpoint(self, face: Face) -> Point:
+        """Where the Properties panel's guide line ends on a face: the surface point in the
+        middle of the face's parameter box, as OCCT's center_of_geometry has it (for a cylinder
+        the point opposite the seam, at half height). When the face does not cover that point -
+        a trimmed face whose middle is cut away, such as a plate with a hole there - a point the
+        kernel finds inside the face instead (a curved face's centroid can lie off it)."""
+        middle = face.position_at(0.5, 0.5)
+        if face.distance_to(middle) <= 1e-7 * max(face.bbox().diagonal, 1.0):
+            return self._point(middle)
+        return self._point(face.interior_point())
 
     def _axis_center(self, face: Face) -> Point:
         """The center of a cylinder or cone face: its center of mass projected onto its axis.
