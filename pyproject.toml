@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ocp-viewer-smlibpy"
-version = "0.1.0"
+version = "0.1.1"
 authors = [{ name = "Bernhard Walter", email = "b_walter@arcor.de" }]
 description = "Show smlibpy (SMLib) objects in the OCP CAD Viewer: the smlib kernel plugin for ocp-tessellate"
 readme = "README.md"
@@ -60,7 +60,7 @@ combine-as-imports = true
 # bump-my-version settings
 
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.1.1"
 commit = false
 tag = false
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(?P<release>\\d*)(?P<build>\\d*)"
